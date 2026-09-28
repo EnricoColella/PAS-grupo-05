@@ -1,0 +1,13 @@
+OFFLINE: operação UPA-01-OP-0001 salva localmente
+REDE: conexão restabelecida
+SYNC: tentativa 1 para UPA-01-OP-0001
+REDE: servidor processou a operação, mas a resposta não chegou à unidade
+SYNC: tentativa 2 para UPA-01-OP-0001
+SERVIDOR: chave já processada; reutilizando resultado anterior
+SYNC: confirmação recebida (ATD-001)
+
+RESUMO
+atendimentos no banco central: 1
+chaves de idempotência processadas: 1
+operações locais pendentes: 0
+RESULTADO: PASSOU
