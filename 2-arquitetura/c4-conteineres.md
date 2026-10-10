@@ -1,8 +1,6 @@
-
-
 # C4 — Nível 2: Contêineres
 
-O diagrama de contêineres apresenta as principais unidades executáveis e de armazenamento do Sistema Municipal Integrado de Saúde. A arquitetura mantém uma aplicação principal em monolito modular e utiliza serviços gerenciados apenas nas fronteiras em que há necessidade específica de persistência, mensageria ou processamento assíncrono.
+O diagrama de contêineres apresenta as principais unidades executáveis e de armazenamento do Sistema Municipal Integrado de Saúde. A arquitetura mantém uma aplicação principal em monolito modular e utiliza serviços gerenciados nas fronteiras em que há necessidade específica de persistência, mensageria ou processamento assíncrono.
 
 ```mermaid
 flowchart TB
@@ -34,7 +32,7 @@ flowchart TB
         subgraph camada_dados[" "]
             direction LR
 
-            banco[("«container»<br/><b>Banco de Dados Central</b><br/>[Banco relacional gerenciado]<br/><small>Persistência principal dos módulos de negócio</small>")]
+            banco[("«container»<br/><b>Banco de Dados Central</b><br/>[Banco relacional gerenciado]<br/><small>Persistência dos módulos e outbox de integração</small>")]
 
             subgraph bloco_integracao[" "]
                 direction TB
@@ -50,7 +48,6 @@ flowchart TB
         federal["«external_system»<br/><b>Sistemas federais de saúde</b><br/><small>Enviam e recebem dados por APIs externas</small>"]
     end
 
-
     profissionais -->|"Registra operações da unidade<br/>[chamada local]"| unidade
     gestao -->|"Consulta gestão e vigilância<br/>[chamada · HTTPS]"| portal
     cidadao -->|"Acessa serviços e agendamentos<br/>[chamada · HTTPS]"| portal
@@ -60,8 +57,8 @@ flowchart TB
     unidade -->|"Consulta, registra e sincroniza<br/>[chamada · HTTPS/JSON]"| backend
     portal -->|"Consulta e registra informações<br/>[chamada · HTTPS/JSON]"| backend
 
-    backend -->|"Lê e grava dados dos módulos<br/>[acesso a dados · SQL/TLS]"| banco
-    backend -->|"Registra tarefa de integração<br/>[fila · mensageria]"| fila
+    backend -->|"Lê e grava dados dos módulos e tarefas da outbox<br/>[acesso a dados · SQL/TLS]"| banco
+    backend -->|"Publica tarefas pendentes da outbox<br/>[fila · mensageria]"| fila
 
     fila -->|"Aciona processamento pendente<br/>[fila · gatilho]"| integracao
 
@@ -69,7 +66,6 @@ flowchart TB
 
     integracao -->|"Transmite dados pendentes<br/>[chamada · API]"| federal
     federal -->|"Envia dados para a rede municipal<br/>[chamada · API]"| backend
-
 
     style usuarios fill:none,stroke:none
     style externos fill:none,stroke:none
@@ -106,9 +102,9 @@ flowchart TB
 
 **Aplicação de Saúde:** contém os módulos de negócio do sistema e constitui a principal unidade de implantação. Internamente segue a estrutura de monolito modular definida no ADR 0001.
 
-**Banco de Dados Central:** mantém a persistência principal do sistema. Embora fisicamente compartilhado, os dados são logicamente separados e possuem proprietário definido por módulo, conforme o ADR 0002.
+**Banco de Dados Central:** mantém a persistência principal do sistema. Embora fisicamente compartilhado, os dados são logicamente separados e possuem proprietário definido por módulo, conforme o ADR 0002. Também contém a outbox utilizada nas integrações assíncronas. A informação municipal e sua tarefa de integração podem ser gravadas na mesma transação local antes da publicação na fila.
 
-**Fila Persistente:** armazena tarefas de integração que não precisam de resposta imediata. Seu uso é localizado e não transforma toda a aplicação em uma arquitetura orientada a eventos.
+**Fila Persistente:** recebe as tarefas já registradas de forma durável na outbox e mantém as mensagens que não precisam de resposta imediata. Seu uso é localizado e não transforma toda a aplicação em uma arquitetura orientada a eventos.
 
 **Função de Integração:** é acionada pela fila para executar trabalhos assíncronos curtos, como transmitir notificações e outros dados aos sistemas federais. A indisponibilidade do destino não mantém uma requisição da unidade de saúde bloqueada.
 
@@ -118,6 +114,6 @@ O suporte offline existe somente entre a **Aplicação da Unidade**, o **Armazen
 
 A comunicação com o **Sistema Legado de Regulação** permanece síncrona nas capacidades que ainda dependem dele. Enquanto uma capacidade não tiver sido migrada, o legado permanece como sua única autoridade de escrita, conforme os ADRs 0002 e 0003.
 
-As integrações externas que não exigem resposta imediata passam pela **Fila Persistente** e pela **Função de Integração**. Já dados recebidos dos sistemas federais entram pela API da Aplicação de Saúde e são tratados pelos adaptadores correspondentes.
+As integrações externas que não exigem resposta imediata utilizam uma **outbox transacional** antes da Fila Persistente. A tarefa é gravada no Banco de Dados Central junto com a alteração municipal e posteriormente publicada pelo Adaptador de Mensageria. A Fila Persistente e a Função de Integração continuam responsáveis por desacoplar o processamento externo da operação municipal, conforme os ADRs 0006 e 0007. Dados recebidos dos sistemas federais entram pela API da Aplicação de Saúde e são tratados pelos adaptadores correspondentes.
 
 O diagrama contém **12 elementos**, respeitando o limite de legibilidade adotado no capítulo 3 do livro.

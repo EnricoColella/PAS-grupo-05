@@ -1,4 +1,3 @@
-
 # C4 — Nível 3: Componentes da Aplicação de Saúde
 
 O diagrama de componentes detalha internamente o contêiner **Aplicação de Saúde**, principal unidade de implantação do sistema. Os componentes são organizados por capacidade de negócio, seguindo a decisão de monolito modular, enquanto dependências externas relevantes são isoladas por adaptadores.
@@ -36,7 +35,7 @@ flowchart TB
 
             legadoAdapter["<b>Adaptador de Regulação Legada</b><br/><small>Traduz o modelo novo para o contrato legado</small>"]
 
-            mensageria["<b>Adaptador de Mensageria</b><br/><small>Registra tarefas de integração assíncrona</small>"]
+            mensageria["<b>Adaptador de Mensageria</b><br/><small>Publica na fila tarefas pendentes da outbox</small>"]
         end
     end
 
@@ -60,14 +59,15 @@ flowchart TB
     legadoAdapter -->|"chamada de procedimento remota"| legado
 
     vigilancia -->|"chamada por porta secundária"| mensageria
-    mensageria -->|"fila"| fila
+    mensageria -->|"acesso a dados<br/>lê tarefas pendentes da outbox"| banco
+    mensageria -->|"fila<br/>publica tarefa"| fila
 
     atendimento -->|"acesso a dados"| banco
     prontuario -->|"acesso a dados"| banco
     regulacao -->|"acesso a dados"| banco
     farmacia -->|"acesso a dados"| banco
     agendamento -->|"acesso a dados"| banco
-    vigilancia -->|"acesso a dados"| banco
+    vigilancia -->|"acesso a dados<br/>notificação + tarefa na outbox"| banco
 
     style modulos fill:none,stroke:none
     style modulos2 fill:none,stroke:none
@@ -107,11 +107,33 @@ flowchart TB
 
 **Agendamento:** mantém consultas, exames, vacinação e demais agendamentos.
 
-**Vigilância Epidemiológica:** registra as notificações compulsórias no sistema municipal e solicita posteriormente a criação das tarefas de integração externa.
+**Vigilância Epidemiológica:** registra as notificações compulsórias no sistema municipal. A notificação e a tarefa necessária para sua integração externa são persistidas na mesma transação local, sendo a tarefa registrada na outbox.
 
 **Adaptador de Regulação Legada:** implementa a porta utilizada pelo módulo de Regulação para conversar com o sistema legado e funciona como camada anticorrupção entre os dois modelos.
 
-**Adaptador de Mensageria:** esconde do módulo de Vigilância os detalhes da infraestrutura de mensageria e encaminha tarefas assíncronas para a Fila Persistente.
+**Adaptador de Mensageria:** esconde os detalhes da infraestrutura de mensageria, consulta as tarefas pendentes da outbox, publica essas tarefas na Fila Persistente e registra a publicação depois que a mensagem é aceita pela fila.
+
+## Publicação durável das integrações
+
+A integração externa utiliza uma outbox transacional para evitar perda de tarefas entre a gravação no banco e a publicação na fila.
+
+```text
+Vigilância Epidemiológica
+        ↓
+mesma transação
+        ↓
+Banco de Dados Central
+   ├─ notificação
+   └─ tarefa pendente na outbox
+        ↓
+Adaptador de Mensageria
+        ↓
+Fila Persistente
+```
+
+Se a aplicação falhar depois de confirmar a transação local e antes da publicação, a tarefa continua registrada na outbox e pode ser publicada posteriormente.
+
+Uma falha depois da publicação, mas antes da confirmação local, pode provocar nova publicação da mesma tarefa. Por isso, o processamento continua sendo idempotente.
 
 ## Regra de autoridade da regulação
 
@@ -157,8 +179,9 @@ As setas dos módulos para o Banco de Dados Central representam seus respectivos
 
 ## Relação com os ADRs
 
-- **ADR 0001:** define o monolito modular e as fronteiras hexagonais.
-- **ADR 0002:** define propriedade e consistência dos dados.
-- **ADR 0003:** define a integração e substituição gradual do legado.
-- **ADR 0005:** define a sincronização idempotente das operações offline.
-- **ADR 0006:** define o uso localizado de mensageria para integrações assíncronas.
+* **ADR 0001:** define o monolito modular e as fronteiras hexagonais.
+* **ADR 0002:** define propriedade e consistência dos dados.
+* **ADR 0003:** define a integração e substituição gradual do legado.
+* **ADR 0005:** define a sincronização idempotente das operações offline.
+* **ADR 0006:** define o uso localizado de mensageria para integrações assíncronas.
+* **ADR 0007:** define o uso da outbox transacional para garantir a publicação durável das tarefas de integração.

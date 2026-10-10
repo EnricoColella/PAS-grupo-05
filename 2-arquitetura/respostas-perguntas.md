@@ -1,4 +1,3 @@
-
 # Respostas às Perguntas Obrigatórias do Caso Saúde
 
 Este documento responde às cinco perguntas obrigatórias do Caso Saúde e relaciona cada resposta às decisões arquiteturais e aos diagramas C4 correspondentes.
@@ -9,17 +8,21 @@ A **Aplicação da Unidade** continua permitindo o registro das operações auto
 
 Quando a conexão retorna, as operações pendentes são sincronizadas com a **Aplicação de Saúde**. Caso uma operação já tenha sido processada, mas a confirmação tenha se perdido, o mesmo identificador é reenviado e o servidor reconhece a repetição, evitando aplicar o efeito duas vezes.
 
-O armazenamento local é apenas temporário e não se torna uma segunda fonte definitiva dos dados da rede. Operações que exigem coordenação global, como a confirmação de uma reserva de leito, não podem ser concluídas offline.
+O mecanismo offline é utilizado para novos registros assistenciais autorizados, como triagem e atendimento. Ele não envia uma cópia completa do estado de um paciente para sobrescrever silenciosamente o estado central.
+
+Alterações que dependam de um estado compartilhado que possa ter sido modificado durante a indisponibilidade não são resolvidas automaticamente por uma política de *Last-Write-Wins*. Elas exigem reconexão ou tratamento explícito antes de alterar definitivamente o estado central.
+
+O armazenamento local é temporário e não se torna uma segunda fonte definitiva dos dados da rede. Operações que exigem coordenação global, como a confirmação de uma reserva de leito, não podem ser concluídas offline.
 
 **ADRs relacionados:**
 
-- ADR 0002 — definir propriedade e consistência dos dados por módulo;
-- ADR 0005 — sincronizar atendimentos offline de forma idempotente.
+* ADR 0002 — definir propriedade e consistência dos dados por módulo;
+* ADR 0005 — sincronizar atendimentos offline de forma idempotente.
 
 **Diagramas relacionados:**
 
-- C4 de Contêineres: Aplicação da Unidade, Armazenamento Local e Aplicação de Saúde;
-- C4 de Componentes: Triagem e Atendimento e Prontuário Eletrônico.
+* C4 de Contêineres: Aplicação da Unidade, Armazenamento Local e Aplicação de Saúde;
+* C4 de Componentes: Triagem e Atendimento e Prontuário Eletrônico.
 
 ---
 
@@ -37,13 +40,13 @@ Assim, novo sistema e legado nunca atuam simultaneamente como autoridades sobre 
 
 **ADRs relacionados:**
 
-- ADR 0002 — definir propriedade e consistência dos dados por módulo;
-- ADR 0003 — integrar legado e terceiros por adaptadores.
+* ADR 0002 — definir propriedade e consistência dos dados por módulo;
+* ADR 0003 — integrar legado e terceiros por adaptadores.
 
 **Diagramas relacionados:**
 
-- C4 de Contexto: Sistema Municipal Integrado de Saúde e Sistema Legado de Regulação;
-- C4 de Componentes: Regulação, Adaptador de Regulação Legada e Sistema Legado.
+* C4 de Contexto: Sistema Municipal Integrado de Saúde e Sistema Legado de Regulação;
+* C4 de Componentes: Regulação, Adaptador de Regulação Legada e Sistema Legado.
 
 ---
 
@@ -51,18 +54,22 @@ Assim, novo sistema e legado nunca atuam simultaneamente como autoridades sobre 
 
 O módulo de **Prontuário Eletrônico** é o proprietário dos registros clínicos e das informações de auditoria associadas a eles. Alterações e acessos relevantes ao prontuário devem ser registrados com identificação do responsável, permitindo rastrear quem consultou ou modificou as informações.
 
-A arquitetura trata a retenção de 20 anos como uma restrição específica do prontuário, conforme a premissa definida na atividade. Essa responsabilidade permanece concentrada no módulo proprietário e não depende das políticas de outros módulos.
+A arquitetura trata a retenção de 20 anos como uma restrição específica do prontuário, conforme a premissa definida na atividade.
 
-Os direitos do paciente sobre seus dados precisam ser tratados sem apagar indiscriminadamente informações que estejam submetidas à retenção obrigatória definida no caso. A atividade não especifica o procedimento jurídico detalhado para cada solicitação prevista na LGPD; por isso, a arquitetura garante propriedade, auditoria e capacidade de aplicar políticas de retenção, deixando a regra jurídica específica como política a ser definida pela organização responsável.
+Essa retenção não exige que todos os registros permaneçam durante vinte anos no mesmo conjunto de dados de acesso frequente. O módulo deve permitir uma política de ciclo de vida na qual dados históricos possam ser particionados ou movidos para camadas de armazenamento adequadas conforme volume e frequência de acesso, sem perder a capacidade de recuperação e auditoria.
+
+A primeira versão não define antecipadamente um prazo de migração nem uma tecnologia específica para armazenamento histórico, pois essas escolhas devem ser baseadas no volume real observado.
+
+Os direitos do paciente sobre seus dados precisam ser tratados sem apagar indiscriminadamente informações submetidas à retenção definida no caso. A atividade não especifica o procedimento jurídico detalhado para cada solicitação prevista na LGPD; por isso, a arquitetura garante propriedade, auditoria e capacidade de aplicar políticas de retenção, deixando a regra jurídica específica como política da organização responsável.
 
 **ADR relacionado:**
 
-- ADR 0002 — definir propriedade e consistência dos dados por módulo.
+* ADR 0002 — definir propriedade e consistência dos dados por módulo.
 
 **Diagramas relacionados:**
 
-- C4 de Contêineres: Aplicação de Saúde e Banco de Dados Central;
-- C4 de Componentes: Prontuário Eletrônico.
+* C4 de Contêineres: Aplicação de Saúde e Banco de Dados Central;
+* C4 de Componentes: Prontuário Eletrônico.
 
 ---
 
@@ -70,23 +77,26 @@ Os direitos do paciente sobre seus dados precisam ser tratados sem apagar indisc
 
 A notificação é registrada primeiro no módulo municipal de **Vigilância Epidemiológica**, portanto sua disponibilidade para a Vigilância municipal não depende da disponibilidade do sistema federal.
 
-Após a persistência da notificação, é criada uma tarefa de integração externa e colocada na **Fila Persistente**.
+A notificação e a tarefa necessária para sua integração externa são gravadas na **mesma transação local** do Banco de Dados Central. A tarefa fica registrada em uma **outbox transacional**.
 
-A **Função de Integração** consome essa tarefa e tenta transmiti-la ao sistema federal. Caso o destino esteja indisponível, a tarefa permanece pendente para nova tentativa, sem bloquear a operação da unidade nem apagar a notificação já registrada municipalmente.
+O **Adaptador de Mensageria** consulta as tarefas pendentes da outbox e as publica na **Fila Persistente**. Dessa forma, se a aplicação falhar depois de salvar a notificação, mas antes da publicação, a tarefa continua registrada e pode ser enviada posteriormente.
 
-As reentregas precisam ser idempotentes e o atraso da fila deve ser monitorado para que tarefas pendentes não permaneçam sem tratamento.
+A **Função de Integração** consome a mensagem da fila e tenta transmiti-la ao sistema federal. Caso o destino esteja indisponível, a mensagem permanece pendente para nova tentativa, sem bloquear a unidade nem apagar a notificação municipal.
 
-Dessa forma, o requisito de comunicação à Vigilância municipal e a disponibilidade do sistema federal ficam desacoplados.
+Como uma publicação ou entrega pode ser repetida após uma falha de confirmação, o processamento externo precisa ser idempotente. O atraso da fila e as tarefas pendentes da outbox também precisam ser monitorados para evitar que uma notificação permaneça sem tratamento.
+
+Assim, existem duas proteções diferentes: a **outbox** impede a perda da tarefa entre o banco e a fila, enquanto a **Fila Persistente** desacopla a operação municipal da disponibilidade do sistema federal.
 
 **ADRs relacionados:**
 
-- ADR 0004 — operar com uma unidade principal e serviços gerenciados;
-- ADR 0006 — usar fila persistente para integrações assíncronas.
+* ADR 0004 — operar com uma unidade principal e serviços gerenciados;
+* ADR 0006 — usar fila persistente para integrações assíncronas;
+* ADR 0007 — garantir publicação durável com outbox transacional.
 
 **Diagramas relacionados:**
 
-- C4 de Contêineres: Aplicação de Saúde, Fila Persistente, Função de Integração e Sistemas Federais;
-- C4 de Componentes: Vigilância Epidemiológica e Adaptador de Mensageria.
+* C4 de Contêineres: Aplicação de Saúde, Banco de Dados Central, Fila Persistente, Função de Integração e Sistemas Federais;
+* C4 de Componentes: Vigilância Epidemiológica e Adaptador de Mensageria.
 
 ---
 
@@ -102,22 +112,22 @@ A migração não utiliza duas implementações como autoridades simultâneas so
 
 **ADRs relacionados:**
 
-- ADR 0001 — adotar monolito modular com fronteiras hexagonais;
-- ADR 0003 — integrar legado e terceiros por adaptadores.
+* ADR 0001 — adotar monolito modular com fronteiras hexagonais;
+* ADR 0003 — integrar legado e terceiros por adaptadores.
 
 **Diagramas relacionados:**
 
-- C4 de Contexto: Sistema Municipal Integrado de Saúde e Sistema Legado de Regulação;
-- C4 de Componentes: Regulação e Adaptador de Regulação Legada.
+* C4 de Contexto: Sistema Municipal Integrado de Saúde e Sistema Legado de Regulação;
+* C4 de Componentes: Regulação e Adaptador de Regulação Legada.
 
 ---
 
 # Resumo de rastreabilidade
 
-| Pergunta                                                       | ADRs principais    | Diagramas principais       |
-| -------------------------------------------------------------- | ------------------ | -------------------------- |
-| **1 — Operação offline**                              | ADR 0002, ADR 0005 | Contêineres e Componentes |
-| **2 — Reserva exclusiva de leito**                      | ADR 0002, ADR 0003 | Contexto e Componentes     |
-| **3 — Auditoria e retenção do prontuário**           | ADR 0002           | Contêineres e Componentes |
-| **4 — Notificação com sistema federal indisponível** | ADR 0004, ADR 0006 | Contêineres e Componentes |
-| **5 — Substituição gradual do legado**                | ADR 0001, ADR 0003 | Contexto e Componentes     |
+| Pergunta                                             | ADRs principais              | Diagramas principais      |
+| ---------------------------------------------------- | ---------------------------- | ------------------------- |
+| **1 — Operação offline**                             | ADR 0002, ADR 0005           | Contêineres e Componentes |
+| **2 — Reserva exclusiva de leito**                   | ADR 0002, ADR 0003           | Contexto e Componentes    |
+| **3 — Auditoria e retenção do prontuário**           | ADR 0002                     | Contêineres e Componentes |
+| **4 — Notificação com sistema federal indisponível** | ADR 0004, ADR 0006, ADR 0007 | Contêineres e Componentes |
+| **5 — Substituição gradual do legado**               | ADR 0001, ADR 0003           | Contexto e Componentes    |
